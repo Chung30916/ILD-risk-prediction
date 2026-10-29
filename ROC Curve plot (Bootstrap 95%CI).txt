@@ -1,0 +1,69 @@
+rm(list=ls())
+
+library(ggplot2)
+library(dplyr)
+library(purrr)
+
+
+file_names <- c(
+  "C:/Users/line1/Desktop/台中榮總/ILD_GWAS/Data/roc_bootstrap_ci_RF.csv",
+  "C:/Users/line1/Desktop/台中榮總/ILD_GWAS/Data/roc_bootstrap_ci_LGBM.csv",
+  "C:/Users/line1/Desktop/台中榮總/ILD_GWAS/Data/roc_bootstrap_ci_XGB.csv",
+  "C:/Users/line1/Desktop/台中榮總/ILD_GWAS/Data/roc_bootstrap_ci_LR.csv",
+  "C:/Users/line1/Desktop/台中榮總/ILD_GWAS/Data/roc_bootstrap_ci_AdaB.csv",
+  "C:/Users/line1/Desktop/台中榮總/ILD_GWAS/Data/roc_bootstrap_ci_SVM.csv"
+)
+
+
+all_roc_data <- file_names %>%
+  map_df(~ read.csv(.x)) %>%
+  mutate(
+    model_label = sprintf("%s (AUROC = %.3f [%.3f–%.3f])", 
+                          model, auc_point, auc_lower, auc_upper)
+  )
+
+model_order <- all_roc_data %>%
+  distinct(model, auc_point, model_label) %>%
+  arrange(desc(auc_point)) %>%
+  pull(model_label)
+
+all_roc_data$model_label <- factor(all_roc_data$model_label, levels = model_order)
+
+sci_colors <- c(
+  "#4DBBD5", 
+  "#E64B35", 
+  "#00A087", 
+  "#3C5488", 
+  "#F39B7F", 
+  "#8491B4"  
+)
+
+# -------------------------------------------------------------
+p_facet <- ggplot(all_roc_data, aes(x = fpr, y = tpr, color = model, fill = model)) +
+  geom_segment(aes(x = 0, y = 0, xend = 1, yend = 1), 
+               linetype = "dashed", color = "grey85", linewidth = 0.6, inherit.aes = FALSE) +
+  geom_ribbon(aes(ymin = tpr_lower, ymax = tpr_upper), alpha = 0.25, color = NA) +
+  geom_line(linewidth = 1.0) +
+  facet_wrap(~ model_label, ncol = 3) +
+  scale_color_manual(values = rep(sci_colors, length.out = length(unique(all_roc_data$model)))) +
+  scale_fill_manual(values = rep(sci_colors, length.out = length(unique(all_roc_data$model)))) +
+  scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2), expand = c(0.01, 0.01)) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2), expand = c(0.01, 0.01)) +
+  labs(
+    x = "1 - Specificity (False Positive Rate)",
+    y = "Sensitivity (True Positive Rate)"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 14, margin = margin(b = 12)),
+    strip.text = element_text(face = "bold", size = 10),
+    strip.background = element_rect(fill = "grey98", color = "grey100"),
+    panel.grid.major=element_blank(),
+    # panel.grid.minor = element_blank(),
+    legend.position = "none"
+  )
+
+print(p_facet)
+
+ggsave("C:/Users/line1/Desktop/台中榮總/ILD_GWAS/Result/Figure_ROC_Faceted_95CI.tiff", plot = p_facet, width = 11, height = 7, dpi = 300)
+
