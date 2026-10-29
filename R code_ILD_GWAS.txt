@@ -1,0 +1,166 @@
+rm(list=ls())
+
+library('data.table')
+
+
+
+df_train=read.csv("C:/Users/line1/Desktop/台中榮總/ILD_GWAS/Data/SNP_ML_ILD_new_1e03_train.csv",header=T)
+df_test=read.csv("C:/Users/line1/Desktop/台中榮總/ILD_GWAS/Data/SNP_ML_ILD_new_1e03_test.csv",header=T)
+
+dim(df_train)     # 1412  541
+dim(df_test)      #  250  541
+
+
+SNP_p_value=read.csv("C:/Users/line1/Desktop/台中榮總/ILD_GWAS/Data/SNP_p_value_logistic_new_ILD_candidate_1e03.csv",header=T)
+dim(SNP_p_value)     # 534   5
+
+
+for(j in 1:ncol(df_train))
+{
+  snptemp=colnames(df_train)[j]
+  
+  if(substr(snptemp,1,2) %in% c("rs","Af"))
+  {
+
+    impute_value_SNP=as.numeric(names(which.max(table(df_train[which(!is.na(df_train[,snptemp])),snptemp]))))
+   
+    if(length(which(is.na(df_train[,snptemp])))>0)
+    {
+      df_train[which(is.na(df_train[,snptemp])),snptemp]=impute_value_SNP
+    }
+    
+    if(length(which(is.na(df_test[,snptemp])))>0)
+    {
+      df_test[which(is.na(df_test[,snptemp])),snptemp]=impute_value_SNP
+    }
+  }
+}
+
+for(j in 1:ncol(df_train))
+{
+  if(length(which(is.na(df_train[,j])))>0) { print(colnames(df_train)[j]) }
+}
+
+for(j in 1:ncol(df_test))
+{
+  if(length(which(is.na(df_test[,j])))>0) { print(colnames(df_test)[j]) }
+}
+
+for(j in 1:ncol(df_train))
+{
+  snptemp=colnames(df_train)[j]
+  
+  if(substr(snptemp,1,2) %in% c("rs","Af"))
+  {
+    beta_temp=round(SNP_p_value$beta[which(SNP_p_value$SNP==snptemp)],6)
+    
+    # PRS calculate in 「train set」
+    df_train[,snptemp]=df_train[,snptemp]*beta_temp
+    
+    # PRS calculate in 「test set」
+    df_test[,snptemp]=df_test[,snptemp]*beta_temp
+  }
+}
+
+PRS_feature_name="PRS"
+df_train[,PRS_feature_name]=rowSums(df_train[,which(substr(colnames(df_train),1,2) %in% c("rs","Af"))])
+df_test[,PRS_feature_name]=rowSums(df_test[,which(substr(colnames(df_test),1,2) %in% c("rs","Af"))])
+
+
+
+demo=read.csv("C:/Users/line1/Desktop/台中榮總/ILD_GWAS/Data/TPMI_ILD_IPF_demography.csv",header=T)
+
+colnames(demo)[which(colnames(demo)=="pID")]="C_ID"
+
+demo$Male=0
+demo$Male[which(demo$sex==1)]=1
+
+demo$Age=NA
+indexdate="2023-12-15"
+
+for(n in 1:nrow(demo))
+{
+  dd=demo$birthday[n]
+  demo$Age[n]=as.numeric(as.Date(indexdate)-as.Date(paste(substr(dd,1,4),substr(dd,5,6),substr(dd,7,8),sep="-")))/365.25
+}
+
+# demo$Age[which(demo$Age<18)]=18
+# summary(demo$Age)
+
+demo=demo[,c('C_ID','Male','Age','smoke','BMI')]
+dim(demo)    # 1664    5
+
+
+df_train=read.csv("C:/Users/line1/Desktop/台中榮總/ILD_GWAS/Data/SNP_ML_ILD_new_1e03_train_PRS_basic.csv",header=T)
+df_test=read.csv("C:/Users/line1/Desktop/台中榮總/ILD_GWAS/Data/SNP_ML_ILD_new_1e03_test_PRS_basic.csv",header=T)
+
+
+demo_train=demo[which(demo$C_ID%in%df_train$C_ID),]
+demo_test=demo[which(demo$C_ID%in%df_test$C_ID),]
+
+df_train1=merge(demo_train,df_train,by="C_ID")
+df_test1=merge(demo_test,df_test,by="C_ID")
+dim(df_train1)    # 1412  546
+dim(df_test1)     # 250   546
+
+df_train1 <- df_train1[, c(setdiff(names(df_train1), "Outcome"), "Outcome")]
+df_test1  <- df_test1[, c(setdiff(names(df_test1), "Outcome"), "Outcome")]
+
+dim(df_train1)    # 1412  546
+dim(df_test1)     #  250  546
+
+
+library(missRanger)
+library(ranger)
+
+df_train <- read.csv("C:/Users/line1/Desktop/台中榮總/ILD_GWAS/Data/ILD_df_train.csv", header = TRUE)
+df_test  <- read.csv("C:/Users/line1/Desktop/台中榮總/ILD_GWAS/Data/ILD_df_test.csv",  header = TRUE)
+
+col_names <- setdiff(names(df_train), c("Outcome", "C_ID"))
+
+df_train_miss <- df_train[, col_names]
+df_test_miss  <- df_test[, col_names]
+
+set.seed(20261010)
+train_result <- missRanger(
+  data = df_train_miss,
+  num.trees = 50,
+  maxiter = 5,
+  pmm.k = 3,
+  # keep_models = TRUE,
+  verbose = 0
+)
+
+test_result <- missRanger:::predict.missRanger(train_result, newdata = df_test_miss)
+test_result <- as.data.frame(test_result)
+train_clean <- as.data.frame(train_result)
+
+residual_cols <- names(which(colSums(is.na(test_result)) > 0))
+
+if (length(residual_cols) > 0) {
+
+  for (col in residual_cols) {
+    
+    na_idx <- which(is.na(test_result[[col]]))
+    
+    predictor_cols <- setdiff(col_names, residual_cols)
+    
+    rf_formula <- as.formula(paste(col, "~ ."))
+    
+    set.seed(20261010)
+    rf_model <- ranger(
+      formula = rf_formula,
+      data = train_clean[, c(col, predictor_cols)],
+      num.trees = 50,
+      seed = 20261010
+    )
+    
+    pred_vals <- predict(rf_model, data = test_result[na_idx, predictor_cols])$predictions
+    
+    test_result[na_idx, col] <- pred_vals
+  }
+}
+
+df_train[, col_names] <- train_clean
+df_test[, col_names]  <- test_result
+
